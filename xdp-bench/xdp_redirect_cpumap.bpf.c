@@ -8,6 +8,8 @@
 #include <xdp/xdp_sample_common.bpf.h>
 #include <xdp/parsing_helpers.h>
 #include "hash_func01.h"
+#include <string.h>
+#include <linux/xfrm.h>
 
 /* Special map type that can XDP_REDIRECT frames to another CPU */
 struct {
@@ -200,6 +202,137 @@ int  cpumap_touch_data(struct xdp_md *ctx)
 		NO_TEAR_INC(rec->dropped);
 		return XDP_DROP;
 	}
+
+	if (cpu_dest >= nr_cpus) {
+		NO_TEAR_INC(rec->issue);
+		return XDP_ABORTED;
+	}
+	return bpf_redirect_map(&cpu_map, cpu_dest, 0);
+}
+
+typedef int                     s32;
+
+struct bpf_xfrm_state_opts {
+        s32 error;
+        s32 netns_id;
+        __u32 mark;
+        xfrm_address_t daddr;
+        __be32 spi;
+        __u8 proto;
+        __u16 family;
+};
+
+struct xfrm_state *
+bpf_xdp_get_xfrm_state(struct xdp_md *ctx, struct bpf_xfrm_state_opts *opts,
+		       __u32 opts__sz) __ksym;
+
+SEC("xdp")
+int  cpumap_xfrm_spi(struct xdp_md *ctx)
+{
+	void *data_end = (void *)(long)ctx->data_end;
+	void *data     = (void *)(long)ctx->data;
+	__u32 key = bpf_get_smp_processor_id();
+	struct ethhdr *eth = data;
+	__u8 ip_proto = IPPROTO_ESP;
+	struct datarec *rec;
+	__u16 eth_proto = 0;
+	__u64 l3_offset = 0;
+	__u32 cpu_dest = 0;
+	__u32 cpu_idx = 0;
+	__u32 *cpu_lookup;
+	__u32 *cpu_max;
+	__u32 key0 = 0;
+	struct xfrm_state *x;
+	struct bpf_xfrm_state_opts opts = {};
+	__u8 *xprth;
+	__be32 *ehdr;
+	struct iphdr *iph;
+	int ret;
+
+	cpu_max = bpf_map_lookup_elem(&cpus_count, &key0);
+
+	rec = bpf_map_lookup_elem(&rx_cnt, &key);
+	if (!rec)
+		return XDP_PASS;
+	NO_TEAR_INC(rec->processed);
+
+	cpu_max = bpf_map_lookup_elem(&cpus_count, &key0);
+	if (!cpu_max)
+                return XDP_ABORTED;
+
+	if (!(parse_eth(eth, data_end, &eth_proto, &l3_offset)))
+		return XDP_PASS; /* Just skip */
+
+
+	/* Extract L4 protocol */
+	switch (eth_proto) {
+	case ETH_P_IP:
+		ip_proto = get_proto_ipv4(ctx, l3_offset);
+		opts.family = AF_INET;
+		opts.daddr.a4 = iph->daddr;
+		break;
+	case ETH_P_IPV6:
+		ip_proto = get_proto_ipv6(ctx, l3_offset);
+		break;
+	case ETH_P_ARP:
+		cpu_idx = 0; /* ARP packet handled on separate CPU */
+		break;
+	default:
+		cpu_idx = 0;
+	}
+
+	if (ip_proto != IPPROTO_ESP)
+                return XDP_PASS; /* Just skip */
+
+	iph = data + l3_offset;
+
+	if (iph + 1 > data_end)
+                return XDP_PASS; /* Just skip */
+
+	opts.netns_id = BPF_F_CURRENT_NETNS;
+
+	opts.spi = ehdr[0];
+	opts.proto = iph->protocol; // IPPROTO_ESP;
+
+	xprth = (__u8 *)(data + l3_offset + iph->ihl * 4);
+	if (xprth + 4 > data_end)
+		return XDP_PASS;
+	ehdr = (__be32 *)xprth;
+
+	x = bpf_xdp_get_xfrm_state(ctx, &opts, sizeof(opts));
+	if (!x || opts.error)
+		return XDP_PASS;
+
+	cpu_idx = x->pcpu_num;
+
+	if (cpu_idx >= *cpu_max) {
+                rec->issue++;
+                return XDP_PASS;
+        }
+
+        if (ret < 0)
+                return XDP_PASS;
+
+	/* Choose CPU based on L4 protocol */
+	switch (ip_proto) {
+	case IPPROTO_ICMP:
+	case IPPROTO_ICMPV6:
+		cpu_idx = 2;
+		break;
+	case IPPROTO_TCP:
+		cpu_idx = 0;
+		break;
+	case IPPROTO_UDP:
+		cpu_idx = 1;
+		break;
+	default:
+		cpu_idx = 0;
+	}
+
+	cpu_lookup = bpf_map_lookup_elem(&cpus_available, &cpu_idx);
+	if (!cpu_lookup)
+		return XDP_ABORTED;
+	cpu_dest = *cpu_lookup;
 
 	if (cpu_dest >= nr_cpus) {
 		NO_TEAR_INC(rec->issue);
