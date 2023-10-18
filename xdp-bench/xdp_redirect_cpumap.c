@@ -111,6 +111,7 @@ static int create_cpu_entry(__u32 cpu, struct bpf_cpumap_val *value,
 static int mark_cpus_unavailable(void)
 {
 	int ret, i, n_cpus = libbpf_num_possible_cpus();
+	n_cpus = 32;
 	__u32 invalid_cpu = n_cpus;
 
 	for (i = 0; i < n_cpus; i++) {
@@ -210,6 +211,8 @@ int do_redirect_cpumap(const void *cfg, __unused const char *pin_root_path)
 
 
 	n_cpus = libbpf_num_possible_cpus();
+	pr_info("AA %d truncate to 32\n", n_cpus);
+	n_cpus = 32;
 
 	/* Notice: Choosing the queue size is very important when CPU is
 	 * configured with power-saving states.
@@ -360,6 +363,7 @@ int do_redirect_cpumap(const void *cfg, __unused const char *pin_root_path)
 				ret = EXIT_FAIL;
 				goto end_detach;
 			}
+			pr_info("AA initialize cpu %d/%d\n", j, n_cpus);
 		}
 	}
 
