@@ -11,10 +11,10 @@
  * General Public License for more details.
  */
 #include <bpf/vmlinux.h>
+#include <linux/if_ether.h>
 #include <xdp/xdp_sample_shared.h>
 #include <xdp/xdp_sample.bpf.h>
 #include <xdp/xdp_sample_common.bpf.h>
-#include <linux/if_ether.h>
 
 #ifndef HAVE_LIBBPF_BPF_PROGRAM__TYPE
 static long (*bpf_xdp_load_bytes)(struct xdp_md *xdp_md, __u32 offset, void *buf, __u32 len) = (void *) 189;
