@@ -8,6 +8,20 @@
 #include <xdp/xdp_sample_common.bpf.h>
 #include <xdp/parsing_helpers.h>
 #include "hash_func01.h"
+#include <string.h>
+#include <limits.h>
+
+/* AA FIXME include file to get AF_INET ? */
+#ifndef AF_INET
+#define AF_INET 2
+#define AF_INET6 10
+#endif
+
+struct eth_hdr {
+        unsigned char eth_dest[6];
+        unsigned char eth_source[6];
+        unsigned short eth_proto;
+};
 
 /* Special map type that can XDP_REDIRECT frames to another CPU */
 struct {
@@ -278,6 +292,120 @@ int  cpumap_touch_data(struct xdp_md *ctx)
 		NO_TEAR_INC(rec->issue);
 		return XDP_ABORTED;
 	}
+	return bpf_redirect_map(&cpu_map, cpu_dest, 0);
+}
+
+struct xfrm_state *
+bpf_xdp_get_xfrm_state(struct xdp_md *ctx, struct bpf_xfrm_state_opts *opts,
+                      u32 opts__sz) __ksym;
+void bpf_xdp_xfrm_state_release(struct xfrm_state *) __ksym;
+extern int bpf_dynptr_from_xdp(struct xdp_md *xdp, __u64 flags,
+			       struct bpf_dynptr *ptr__uninit) __ksym;
+extern void *bpf_dynptr_slice(const struct bpf_dynptr *ptr, __u32 offset,
+			      void *buffer, __u32 buffer__szk) __ksym;
+
+SEC("xdp")
+int cpumap_xfrm_spi(struct xdp_md *ctx)
+{
+	__u32 key = bpf_get_smp_processor_id();
+	struct bpf_dynptr ptr;
+	struct datarec *rec;
+	__u32 off;
+	__u32 cpu_dest = 0;
+	__u32 cpu_idx = 0;
+	__u32 *cpu_lookup;
+	__u32 *cpu_max;
+	__u32 key0 = 0;
+	struct bpf_xfrm_state_opts opts = {};
+	__u8 ethh_buf[sizeof(struct eth_hdr)];
+	__u8 iph_buf[20] = {};
+	__u8 esph_buf[8] = {};
+	__u8 udph_buf[8] = {};
+	struct xfrm_state *x;
+	struct eth_hdr *eth;
+	struct iphdr *iph;
+	struct ip_esp_hdr *esph;
+	struct udphdr *udph;
+
+	if (bpf_dynptr_from_xdp(ctx, 0, &ptr))
+		return XDP_PASS;
+
+	eth = bpf_dynptr_slice(&ptr, 0, ethh_buf, sizeof(ethh_buf));
+	if (!eth)
+		return XDP_PASS;
+
+	if (eth->eth_proto != bpf_htons(ETH_P_IP))
+		return XDP_PASS;
+
+	rec = bpf_map_lookup_elem(&rx_cnt, &key);
+	if (!rec)
+		return XDP_PASS;
+
+	NO_TEAR_INC(rec->processed);
+
+	cpu_max = bpf_map_lookup_elem(&cpus_count, &key0);
+	if (!cpu_max)
+		return XDP_ABORTED;
+
+	off = sizeof(struct ethhdr);
+	iph = bpf_dynptr_slice(&ptr, off, iph_buf, sizeof(iph_buf));
+	if (!iph)
+		return XDP_PASS; /* accpet ESP and UDP rest skip */
+
+	if (iph->protocol != IPPROTO_ESP && iph->protocol != IPPROTO_UDP)
+		return XDP_PASS; /* accpet ESP and UDP skip reset*/
+
+	off += sizeof(struct iphdr);
+
+	if (iph->protocol == IPPROTO_UDP) {
+		/* wild guess this is ESP. Normal code look up socket to decide ESP */
+		udph = bpf_dynptr_slice(&ptr, off, udph_buf, sizeof(udph_buf));
+		if (!udph)
+			return XDP_PASS; /* invalid ESP header skip */
+
+		if (bpf_ntohs(udph->dest) != 4500 )
+			return XDP_PASS; /* accpet UDP dport 4500, rest skip */
+
+		off += sizeof(struct udphdr);
+	}
+
+	esph = bpf_dynptr_slice(&ptr, off, esph_buf, sizeof(esph_buf));
+	if (!esph)
+		return XDP_PASS; /* invalid ESP header skip */
+
+	opts.spi = esph->spi;
+	opts.netns_id = BPF_F_CURRENT_NETNS;
+	opts.daddr.a4 = iph->daddr;
+	opts.family = AF_INET;
+	opts.proto = IPPROTO_ESP;
+
+	x = bpf_xdp_get_xfrm_state(ctx, &opts, sizeof(opts));
+	if (!x)
+		return XDP_PASS;
+
+	cpu_idx = x->pcpu_num;
+	bpf_xdp_xfrm_state_release(x);
+
+	if (cpu_idx == UINT_MAX)
+		return XDP_PASS;
+
+	if (cpu_idx >= *cpu_max) {
+		NO_TEAR_INC(rec->issue);
+		return XDP_PASS;
+	}
+
+	cpu_lookup = bpf_map_lookup_elem(&cpus_available, &cpu_idx);
+	if (!cpu_lookup)
+		return XDP_ABORTED;
+
+	cpu_dest = *cpu_lookup;
+
+	if (cpu_dest >= nr_cpus) {
+		NO_TEAR_INC(rec->issue);
+		return XDP_ABORTED;
+	}
+
+	NO_TEAR_INC(rec->xdp_redirect);
 	return bpf_redirect_map(&cpu_map, cpu_dest, 0);
 }
 

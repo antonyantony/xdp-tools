@@ -4,6 +4,7 @@
 
 #include <time.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <getopt.h>
 #include <locale.h>
@@ -40,7 +41,7 @@ const struct cpumap_opts defaults_redirect_cpumap = {
 	.mode = XDP_MODE_NATIVE,
 	.interval = 2,
 	.qsize = 2048,
-	.program_mode = CPUMAP_CPU_L4_HASH,
+	.program_mode = CPUMAP_CPU_SPI,
 };
 
 static const char *cpumap_prog_names[] = {
@@ -52,6 +53,7 @@ static const char *cpumap_prog_names[] = {
 	"cpumap_l4_hash",
 	"cpumap_l4_sport",
 	"cpumap_l4_dport",
+	"cpumap_xfrm_spi",
 };
 
 DEFINE_SAMPLE_INIT(xdp_redirect_cpumap);
