@@ -65,6 +65,7 @@ struct enum_val cpumap_program_modes[] = {
        {"l4-hash", CPUMAP_CPU_L4_HASH},
        {"l4-sport", CPUMAP_CPU_L4_SPORT},
        {"l4-dport", CPUMAP_CPU_L4_DPORT},
+       {"spi", CPUMAP_CPU_SPI},
        {NULL, 0}
 };
 
@@ -187,6 +188,12 @@ struct prog_option redirect_cpumap_options[] = {
 		      .typearg = xdp_modes,
 		      .metavar = "<mode>",
 		      .help = "Load XDP program in <mode>; default native"),
+	DEFINE_OPTION("program-mode", OPT_ENUM, struct cpumap_opts, program_mode,
+		      .short_opt = 'y',
+		      .metavar = "<mode>",
+		      .typearg = cpumap_program_modes,
+		      .help = "Redirect to XFRM CPU using <mode>. Default spi."),
+
 	END_OPTIONS
 };
 
