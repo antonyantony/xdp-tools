@@ -83,6 +83,7 @@ enum cpumap_program_mode {
 	CPUMAP_CPU_L4_HASH,
 	CPUMAP_CPU_L4_SPORT,
 	CPUMAP_CPU_L4_DPORT,
+	CPUMAP_CPU_SPI,
 };
 
 struct cpumap_opts {

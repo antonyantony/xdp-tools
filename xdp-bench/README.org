@@ -369,6 +369,7 @@ redirected to different CPUs. The following options are available:
  l4-hash		- Use source and destination IP hashing to pick target CPU
  l4-sport		- Use modulo of source port to pick target CPU
  l4-dport		- Use modulo of destination port to pick target CPU
+ spi                   - Use XFRM pcpu state to pick target CPU
 #+end_src
 
 The =no-touch= and =touch= modes always redirect packets to the same CPU (the
