@@ -378,6 +378,7 @@ int cpumap_xfrm_spi(struct xdp_md *ctx)
 	opts.daddr.a4 = iph->daddr;
 	opts.family = AF_INET;
 	opts.proto = IPPROTO_ESP;
+	opts.dir = XFRM_SA_DIR_IN;
 
 	x = bpf_xdp_get_xfrm_state(ctx, &opts, sizeof(opts));
 	if (!x)
