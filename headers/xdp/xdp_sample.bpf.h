@@ -2,7 +2,7 @@
 #ifndef _XDP_SAMPLE_BPF_H
 #define _XDP_SAMPLE_BPF_H
 
-#include <bpf/vmlinux.h>
+#include <linux/bpf.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
